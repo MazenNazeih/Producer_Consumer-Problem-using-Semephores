@@ -1,13 +1,16 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <iostream>
 #include <fstream>
-#include <string>
+#include <string.h>
 #include <random>
 #include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
-#include <ctime>
-#include <cstring>
+// #include <ctime>
+// #include <cstring>
+#include <time.h>
 
 #define MAX_COMMODITIES 40
 
@@ -15,7 +18,7 @@
 struct SharedBuffer {
     char commodities[MAX_COMMODITIES][10]; // Commodity names
     double prices[MAX_COMMODITIES];        // Current prices
-    int write_index;                       // Write index for circular buffer
+    int write_index;                           // Write index for circular buffer
 };
 
 // Semaphore operations
@@ -29,19 +32,23 @@ void sem_signal(int sem_id, int sem_num) {
     semop(sem_id, &sb, 1);
 }
 
-// Get formatted current time
+//  Get formatted current time
 std::string get_time() {
-    char buffer[30];
     timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    strftime(buffer, sizeof(buffer), "%m/%d/%Y %H:%M:%S", localtime(&ts.tv_sec));
-    snprintf(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), ".%03ld", ts.tv_nsec / 1000000);
-    return std::string(buffer);
+    if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
+        perror("error in clock_gettime");
+        exit(EXIT_FAILURE);
+    }
+
+    char time_str[30]; // Format: [MM/DD/YYYY HH:MM:SS.SSS]
+    strftime(time_str, sizeof(time_str), "[%m/%d/%Y %H:%M:%S.", localtime(&ts.tv_sec));
+    snprintf(time_str + strlen(time_str), sizeof(time_str) - strlen(time_str), ".%03ld", ts.tv_nsec / 1000000); // to convert from nano second to ms divide by 10^6
+    return std::string(time_str);
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 6) {
-        std::cerr << "Usage: ./producer <COMMODITY_NAME> <MEAN> <STD_DEV> <SLEEP_MS> <BUFFER_SIZE>\n";
+        std::cerr << "Error not enough arguments passed.\nUsage: ./producer <COMMODITY_NAME> <MEAN> <STD_DEV> <SLEEP_MS> <BUFFER_SIZE>\n";
         return 1;
     }
 
@@ -68,10 +75,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize semaphores
-    int sem_id = semget(sem_key, 3, 0666 | IPC_CREAT);
+    //   Attach to semaphores
+    int sem_id = semget(sem_key, 3, 0666);
     if (sem_id == -1) {
-        perror("Semaphore creation failed");
+        perror("Semaphore access failed");
         return 1;
     }
 
@@ -83,7 +90,7 @@ int main(int argc, char *argv[]) {
         double price = distribution(generator);
 
         // Log generating a new value
-        std::cerr << "[" << get_time() << "] " << commodity_name << ": generating a new value " << price << "\n";
+        std::cerr << get_time() << "] " << commodity_name << ": generating a new value " << price << "\n";
 
         // Wait on empty and mutex
         std::cerr << "[" << get_time() << "] " << commodity_name << ": trying to get mutex on shared buffer\n";
@@ -97,14 +104,14 @@ int main(int argc, char *argv[]) {
         shared_buffer->write_index = (index + 1) % buffer_size;
 
         // Log placing value
-        std::cerr << "[" << get_time() << "] " << commodity_name << ": placing " << price << " on shared buffer\n";
+        std::cerr << get_time() << "] " << commodity_name << ": placing " << price << " on shared buffer\n";
 
         // Signal mutex and full
         sem_signal(sem_id, 1); // Unlock mutex
         sem_signal(sem_id, 2); // Signal full
 
         // Sleep
-        std::cerr << "[" << get_time() << "] " << commodity_name << ": sleeping for " << sleep_interval << " ms\n";
+        std::cerr << get_time() << "] " << commodity_name << ": sleeping for " << sleep_interval << " ms\n\n\n";
         usleep(sleep_interval * 1000); // Convert to microseconds
     }
 
