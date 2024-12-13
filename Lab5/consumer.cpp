@@ -68,6 +68,10 @@ const char* predefined_commodities[MAX_COMMODITIES] = {
     "ZINC"
 };
 
+
+// ===========================================================================================
+
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         std::cerr << "Error not enough arguments sent.\nUsage: ./consumer <BUFFER_SIZE>\n";
@@ -90,7 +94,7 @@ int main(int argc, char *argv[]) {
     // size_t aligned_size = ((sizeof(SharedBuffer) + getpagesize() - 1) / getpagesize()) * getpagesize();
 
     shm_id = shmget(sharedm_key, sizeof(SharedBuffer), 0666 | IPC_CREAT | IPC_EXCL);
-if (shm_id == -1) {
+    if (shm_id == -1) {
     if (errno == EEXIST) {
         std::cerr << "Shared memory already exists. Ensure no conflicting memory segments are present.\n";
         std::cerr << "Shared memory id: " << shm_id << " \n";
