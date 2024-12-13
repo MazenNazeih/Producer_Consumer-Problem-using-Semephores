@@ -142,8 +142,8 @@ for (int i = 0; i < MAX_COMMODITIES; i++) {
         printf("\e[1;1H\e[2J");
 
         std::cout << "Commodity Dashboard\n";
-
         std::cout << "===================\n";
+        std::cout << std::setw(15) << "CURRENCY" << std::setw(13) << "PRICE" << std::setw(22) << "AVERAGE PRICE" << "\n";
 
         for (int i = 0; i < MAX_COMMODITIES ; ++i) { // must loop on buffer size to change only the commodities being modified not effecient as i will have to save a dirty bit.
             
@@ -151,6 +151,7 @@ for (int i = 0; i < MAX_COMMODITIES; i++) {
             // sem_wait(sem_id, 1); // Lock mutex
         int index = shared_buffer->write_index[i]; // Get the current write index for commodity i
         double latest_price;
+        double average_val = 0.00;
         
          // Check for circular buffer edge case
          if (index == 0) {
@@ -159,10 +160,15 @@ for (int i = 0; i < MAX_COMMODITIES; i++) {
              latest_price = shared_buffer->prices[i][index - 1]; // Access the most recent price otherwise
          }
 
-    // Print the price with commodity name
-    std::cout << std::setw(15) << std::left << shared_buffer->commodities[i] << ": " << std::fixed << std::setprecision(2) << latest_price << "\n";
+    if (shared_buffer->prices[i][index] > 0) {
+    average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4] ) / 5;
+    }
 
-
+        // Display the commodity, current price, and average price
+        std::cout << std::setw(15) << shared_buffer->commodities[i]  << ": " 
+                  << std::setw(10) << std::fixed << std::setprecision(2) << latest_price
+                  << std::setw(15) << std::fixed << std::setprecision(2) << average_val
+                  << "\n";
 
             // sem_signal(sem_id, 1); // Unlock mutex
             // sem_signal(sem_id, 0); // Signal empty
