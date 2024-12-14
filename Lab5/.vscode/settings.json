@@ -1,5 +1,6 @@
 {
     "files.associations": {
+<<<<<<< HEAD
         "array": "cpp",
         "atomic": "cpp",
         "bit": "cpp",
@@ -51,5 +52,8 @@
         "stdexcept": "cpp",
         "streambuf": "cpp",
         "typeinfo": "cpp"
+=======
+        "iostream": "cpp"
+>>>>>>> Mazen
     }
 }

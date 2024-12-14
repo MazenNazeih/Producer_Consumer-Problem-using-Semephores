@@ -21,10 +21,8 @@
 
 // Structure for shared memory
 struct SharedBuffer {
-    char commodities[MAX_COMMODITIES][20]; // Commodity names
     double prices[MAX_COMMODITIES][5];        // Current prices saved to calc average
-    int write_index[MAX_COMMODITIES];         // Write index for circular buffer to allow continous addition of prices.
-    int prices_count;          // To count the number of prices added to the buffer to be compared with buffer size.                   
+    int write_index[MAX_COMMODITIES];         // Write index for circular buffer to allow continous addition of prices.           
 };
 
 const char* predefined_commodities[MAX_COMMODITIES] = {
@@ -40,17 +38,6 @@ const char* predefined_commodities[MAX_COMMODITIES] = {
     "SILVER",
     "ZINC"
 };
-
-// // Semaphore operations
-// void sem_wait(int sem_id, int sem_num) {
-//     struct sembuf sb = {sem_num, -1, 0};
-//     semop(sem_id, &sb, 1);
-// }
-
-// void sem_signal(int sem_id, int sem_num) {
-//     struct sembuf sb = {sem_num, 1, 0};
-//     semop(sem_id, &sb, 1);
-// }
 
 int get_commodity_index(std::string comm){
     // Convert string to uppercase
@@ -83,6 +70,26 @@ std::string get_time() {
 int shm_id;
 SharedBuffer *shared_buffer = nullptr;
 
+
+// Semaphore operations
+// Decrease the semaphore value 
+void semWait(int semid) {
+    struct sembuf sop = {0, -1, 0};
+    if (semop(semid, &sop, 1) == -1) {
+        perror("semWait failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Increase the semaphore value 
+void semSignal(int semid) {
+    struct sembuf sop = {0, 1, 0};
+    if (semop(semid, &sop, 1) == -1) {
+        perror("semSignal failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
 void handle_sigint(int sig) {
     if (shared_buffer) {
         // Detach from shared memory
@@ -92,6 +99,7 @@ void handle_sigint(int sig) {
             printf("Shared memory detached successfully.\n");
         }
     }
+
     exit(0); // Terminate program
 }
 
@@ -110,6 +118,7 @@ int main(int argc, char *argv[]) {
         std::cerr << "Error Invalid Commodity name.\nMust enter one of these:\n\nALUMINIUM\nCOPPER\nCOTTON\nCRUDEOIL\nGOLD\nLEAD\nMENTHAOIL\nNATURAL GAS\nNICKEL\nSILVER\nZINC\n";
         return 1;
     }
+    
     double mean = std::stod(argv[2]);
     double std_dev = std::stod(argv[3]);
     int sleep_interval = std::stoi(argv[4]);
@@ -129,7 +138,7 @@ int main(int argc, char *argv[]) {
         if (errno == ENOENT) {
             std::cerr << "Error: Shared memory does not exist. Please run the consumer first to create shared memory.\n";
         } else {
-            perror("Failed to access shared memory from the producer.");
+            perror("Failed to access shared memory for the producer.");
         }
         return 1;
     }
@@ -141,16 +150,50 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Getting semaphore keys from the consumer
+    key_t sem_mutex_key = ftok("consumer", 70);
+    key_t sem_filled_key = ftok("consumer", 71);
+    key_t sem_available_key = ftok("consumer", 72);
+    if(sem_mutex_key == -1 || sem_filled_key == -1 || sem_available_key == -1){
+        perror("Failed to generate semaphore keys in the producer.");
+        return 1;
+    }
+    
+    // Getting the created mutex semaphore
+    int sem_mutex_id =  semget(sem_mutex_key, 1, 0666);
+    if (sem_mutex_id == -1) {
+        if (errno == ENOENT) {
+            std::cerr << "Error: (Mutex) semaphore does not exist. Please run the consumer first to create semaphores.\n";
+        } else {
+            perror("Failed to get (mutex) semaphore for the producer.");
+        }
+        return 1;
+    }
+    
+    // Getting the created filled semaphore
+    int sem_filled_id = semget(sem_filled_key, 1, 0666);
+    if (sem_filled_id == -1) {
+        if (errno == ENOENT) {
+            std::cerr << "Error: (Filled) semaphore does not exist. Please run the consumer first to create semaphores.\n";
+        } else {
+            perror("Failed to get (filled) semaphore for the producer.");
+        }
+        return 1;
+    }
+    
+    // Getting the created available semaphore
+    int sem_available_id = semget(sem_available_key, 1, 0666);
+    if (sem_available_id == -1) {
+        if (errno == ENOENT) {
+            std::cerr << "Error: (Available) semaphore does not exist. Please run the consumer first to create semaphores.\n";
+        } else {
+            perror("Failed to get (available) semaphore for the producer.");
+        }
+        return 1;
+    }
+    
+    printf("Producer connected to semaphores successfully.\n");
 
-
-
-
-    // //   Attach to semaphores
-    // int sem_id = semget(sem_key, 3, 0666);
-    // if (sem_id == -1) {
-    //     perror("Semaphore access failed");
-    //     return 1;
-    // }
 
     std::default_random_engine generator;
     std::normal_distribution<double> distribution(mean, std_dev);
@@ -164,26 +207,25 @@ int main(int argc, char *argv[]) {
 
         // Wait on empty and mutex
         std::cerr << get_time() << "] " << commodity_name << ": trying to get mutex on shared buffer\n";
-        // sem_wait(sem_id, 0); // Wait on empty
-        // sem_wait(sem_id, 1); // Lock mutex
+        semWait(sem_available_id); // Wait for the buffer to be available
+        semWait(sem_mutex_id); // Lock mutex
+        printf("Producer have waited on mutex and entered critical section.\n");
 
         // Write to shared memory
         int index = shared_buffer->write_index[comm_index];
         shared_buffer->prices[comm_index][index] = price;
         shared_buffer->write_index[comm_index] = (index + 1) % 5;
-
         // Log placing value
         std::cerr << get_time() << "] " << commodity_name << ": placing " << price << " on shared buffer\n";
 
-        // Signal mutex and full
-        // sem_signal(sem_id, 1); // Unlock mutex
-        // sem_signal(sem_id, 2); // Signal full
+        semSignal(sem_mutex_id); // Unlock mutex
+        semSignal(sem_filled_id); // Signal filled
+        printf("Producer have exited the critical section.\n");
 
-        // Sleep
         std::cerr << get_time() << "] " << commodity_name << ": sleeping for " << sleep_interval << " ms\n\n\n";
+         // Sleep
         usleep(sleep_interval * 1000); // Convert to microseconds
     }
-
 
     return 0;
 }
