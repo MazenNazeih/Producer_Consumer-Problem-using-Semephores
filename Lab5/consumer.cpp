@@ -140,47 +140,61 @@ for (int i = 0; i < MAX_COMMODITIES; i++) {
     // semctl(sem_id, 0, SETVAL, buffer_size); // Empty slots
     // semctl(sem_id, 1, SETVAL, 1);          // Mutex
     // semctl(sem_id, 2, SETVAL, 0);          // Full slots
+    
+        double prev_price[MAX_COMMODITIES] = {0.0};
+        double prev_avg[MAX_COMMODITIES] = {0.0};
+        double latest_price = 0.0;
+        double average_val = 0.0;
 
-    while (true) {
-        // Clear screen
-        printf("\e[1;1H\e[2J");
+        while (true) {
+            // Clear screen
+            printf("\e[1;1H\e[2J");
 
-        std::cout << "Commodity Dashboard\n";
-        std::cout << "===================\n";
-        std::cout << std::setw(15) << "CURRENCY" << std::setw(13) << "PRICE" << std::setw(22) << "AVERAGE PRICE" << "\n";
+            std::cout << "Commodity Dashboard\n";
+            std::cout << "===================\n";
+            std::cout << std::setw(15) << "CURRENCY" << std::setw(13) << "PRICE" << std::setw(22) << "AVERAGE PRICE" << "\n";
 
-        for (int i = 0; i < MAX_COMMODITIES ; ++i) { // must loop on buffer size to change only the commodities being modified not effecient as i will have to save a dirty bit.
-            
-            // sem_wait(sem_id, 2); // Wait for full
-            // sem_wait(sem_id, 1); // Lock mutex
-        int index = shared_buffer->write_index[i]; // Get the current write index for commodity i
-        double latest_price;
-        double average_val = 0.00;
-        
-         // Check for circular buffer edge case
-         if (index == 0) {
-             latest_price = shared_buffer->prices[i][4]; // Access the last position if index is 0
-         } else {
-             latest_price = shared_buffer->prices[i][index - 1]; // Access the most recent price otherwise
-         }
+            for (int i = 0; i < MAX_COMMODITIES; ++i) {
+                int index = shared_buffer->write_index[i];
 
-    if (shared_buffer->prices[i][index] > 0) {
-    average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4] ) / 5;
-    }
+                if (index == 0) {
+                    latest_price = shared_buffer->prices[i][4];
+                } else {
+                    latest_price = shared_buffer->prices[i][index - 1];
+                }
 
-        // Display the commodity, current price, and average price
-        std::cout << std::setw(15) << shared_buffer->commodities[i]  << ": " 
-                  << std::setw(10) << std::fixed << std::setprecision(2) << latest_price
-                  << std::setw(15) << std::fixed << std::setprecision(2) << average_val
-                  << "\n";
+                average_val = 0.0;
+                if (shared_buffer->prices[i][index] > 0) {
+                    average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4]) / 5;
+                }
 
-            // sem_signal(sem_id, 1); // Unlock mutex
-            // sem_signal(sem_id, 0); // Signal empty
+                std::cout << std::setw(12) << shared_buffer->commodities[i] << ": " << std::setw(12) << std::fixed << std::setprecision(2);
+
+                if (latest_price < prev_price[i]) {
+                    std::cout<< std::setw(15) << "\033[1;31m" << latest_price << "\u2193" << "\033[0m";;
+                } else if (latest_price > prev_price[i]) {
+                    std::cout << std::setw(15) << "\033[1;32m" << latest_price << "\u2191" <<"\033[0m";;
+                } else {
+                    std::cout << latest_price;
+                }
+
+                std::cout << std::setw(15) << std::fixed << std::setprecision(2);
+
+                if (average_val < prev_avg[i]) {
+                    std::cout << std::setw(15) << "\033[1;31m" << " " << average_val << "\u2193" << "\033[0m";
+                } else if (average_val > prev_avg[i]) {
+                    std::cout << std::setw(15) << "\033[1;32m" << " " << average_val << "\u2191" << "\033[0m";
+                } else {
+                    std::cout << average_val;
+                }
+
+                std::cout << "\n";
+
+                prev_price[i] = latest_price;
+                prev_avg[i] = average_val;
+            }
+
+            usleep(2000 * 1000);
         }
-
-        usleep(200 * 1000);
-        // sleep(1);
-    }
-
     return 0;
 }
