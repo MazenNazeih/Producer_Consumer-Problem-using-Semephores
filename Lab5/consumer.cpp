@@ -13,25 +13,15 @@
 
 // Structure for shared memory
 struct SharedBuffer {
-    char commodities[MAX_COMMODITIES][20];   // Commodity names
     double prices[MAX_COMMODITIES][5] ;       // Current prices
-    int write_index[MAX_COMMODITIES];          // Write index for circular buffer to allow continous addition of prices. represent the next avaialable index to be written in.
-    int prices_count;          // To count the number of prices added to the buffer to be compared with buffer size.                            
+    int write_index[MAX_COMMODITIES];          // Write index for circular buffer to allow continous addition of prices. represent the next avaialable index to be written in.                        
 };
-
-// // Semaphore operations
-// void sem_wait(int sem_id, int sem_num) {
-//     struct sembuf sb = {sem_num, -1, 0};
-//     semop(sem_id, &sb, 1);
-// }
-
-// void sem_signal(int sem_id, int sem_num) {
-//     struct sembuf sb = {sem_num, 1, 0};
-//     semop(sem_id, &sb, 1);
-// }
 
 int shm_id;
 SharedBuffer *shared_buffer = nullptr;
+int sem_mutex_id = 0;
+int sem_filled_id = 0;
+int sem_available_id = 0;
 
 void handle_sigint(int sig) {
     if (shared_buffer) {
@@ -42,13 +32,32 @@ void handle_sigint(int sig) {
             printf("Shared memory detached successfully.\n");
         }
     }
-    
+
     // Remove shared memory (only in consumer to avoid producers deleting it)
     if (shmctl(shm_id, IPC_RMID, nullptr) == -1) {
         perror("Failed to delete shared memory");
     } else {
         printf("Shared memory deleted successfully.\n");
     }
+
+    if (sem_mutex_id != 0 || sem_filled_id != 0 || sem_available_id != 0) {
+        if (semctl(sem_mutex_id, 0, IPC_RMID) == -1) {
+        perror("Removing the mutex semaphore failed");
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(sem_available_id, 0, IPC_RMID) == -1) {
+        perror("Removing the available semaphore failed");
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(sem_filled_id, 0, IPC_RMID) == -1) {
+        perror("Removing the filled semaphore failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Semaphores removed successfully.\n");
+        
+    }
+
 
     exit(0); // Terminate program
 }
@@ -68,8 +77,49 @@ const char* predefined_commodities[MAX_COMMODITIES] = {
     "ZINC"
 };
 
+// Union for semaphore control
+union semun {
+    int val;               // Value for SETVAL
+    struct semid_ds *buf;  // Buffer for IPC_STAT, IPC_SET
+    unsigned short *array; // Array for GETALL, SETALL
+};
+
+// Decrease the semaphore value 
+void semWait(int semid) {
+    struct sembuf sop = {0, -1, 0};
+    if (semop(semid, &sop, 1) == -1) {
+        perror("semWait failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Increase the semaphore value 
+void semSignal(int semid) {
+    struct sembuf sop = {0, 1, 0};
+    if (semop(semid, &sop, 1) == -1) {
+        perror("semSignal failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void display_dashboard(double current_prices[], double current_avg[]) {
+    // Clear screen
+    printf("\e[1;1H\e[2J");
+
+    std::cout << "Commodity Dashboard\n";
+    std::cout << "==================================================\n";
+    std::cout << std::setw(15) << "CURRENCY" << std::setw(13) << "PRICE" << std::setw(22) << "AVERAGE PRICE" << "\n";
+
+    for (int i = 0; i < MAX_COMMODITIES; i++) {
+        std::cout << std::setw(15) << predefined_commodities[i] << ": " 
+                  << std::setw(10) << std::fixed << std::setprecision(2) << current_prices[i]
+                  << std::setw(15) << std::fixed << std::setprecision(2) << current_avg[i]
+                  << "\n";
+    }
+}
 
 // ===========================================================================================
+
 
 
 int main(int argc, char *argv[]) {
@@ -81,15 +131,13 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, handle_sigint); // listen for termination process and calls handle_siginit dunction.
     int buffer_size = std::stoi(argv[1]);
 
-    // Generate unique key for shared memory and semaphores
+    // Generate unique key for shared memory 
     key_t sharedm_key = ftok("consumer", 65);
     if (sharedm_key == -1) {
         perror("Failed to generate shared memory key in the consumer.");
         return 1;
     }
 
-    // key_t sem_key = ftok("consumer", 75);
-    
     // Create shared memory
     // size_t aligned_size = ((sizeof(SharedBuffer) + getpagesize() - 1) / getpagesize()) * getpagesize();
 
@@ -102,57 +150,112 @@ int main(int argc, char *argv[]) {
     }
     perror("Shared memory creation failed");
     return 1;
-}
-else {
+    }
+    else {
     std::cout << "Shared memory id: " << shm_id << " \n";
-}
+    }
 
     shared_buffer = (SharedBuffer *)shmat(shm_id, nullptr, 0);    
-    // shmdt(shared_buffer);
+   
     if (shared_buffer == (void *)-1) {
         perror("Shared memory attachment failed in consumer.");
-        // shmdt(shared_buffer);
+        shmdt(shared_buffer);
         return 1;
     }
 
 
     // Initialize the write index array with 0
     memset(shared_buffer->write_index, 0, sizeof(shared_buffer->write_index));
-    shared_buffer->prices_count = 0;
     // Initialize the prices array with 0 
     memset(shared_buffer->prices, 0, sizeof(shared_buffer->prices));
   
 
-// filling the commodities array 
-for (int i = 0; i < MAX_COMMODITIES; i++) {
-    strncpy(shared_buffer->commodities[i], predefined_commodities[i], 19);
-    int len = strlen(predefined_commodities[i]);
-    shared_buffer->commodities[i][len] = '\0'; // Ensure null-termination
-}
+    // Generate unique keys for sempahores
+    key_t sem_mutex_key = ftok("consumer", 70);
+     if (sem_mutex_key == -1) {
+        perror("Failed to generate a semaphore (mutex) key in the consumer.");
+        return 1;
+    }
+    key_t sem_filled_key = ftok("consumer", 71);
+     if (sem_filled_key == -1) {
+        perror("Failed to generate a semaphore (filled) key in the consumer.");
+        return 1;
+    }
+    key_t sem_available_key = ftok("consumer", 72);
+     if (sem_available_key == -1) {
+        perror("Failed to generate a semaphore (available) key in the consumer.");
+        return 1;
+    }
 
-    // // Create semaphores
-    // int sem_id = semget(sem_key, 3, 0666 | IPC_CREAT);
-    // if (sem_id == -1) {
-    //     perror("Semaphore creation failed");
-    //     return 1;
-    // }
+    // Create the Mutex semaphore
+    sem_mutex_id = semget(sem_mutex_key, 1, 0666 | IPC_CREAT | IPC_EXCL); 
+    if (sem_mutex_id == -1) {
+         if (errno == EEXIST) {
+        std::cerr << "Semaphore already exists.\n";
+        semctl(sem_mutex_id, 0, IPC_RMID); // Remove the semaphore
+         }
+        perror("Semaphore creation failed in consumer.");
+        return 1;
+    }
+    else {std::cerr << "Mutex Semaphore id: " << sem_mutex_id << " \n";}
 
-    // semctl(sem_id, 0, SETVAL, buffer_size); // Empty slots
-    // semctl(sem_id, 1, SETVAL, 1);          // Mutex
-    // semctl(sem_id, 2, SETVAL, 0);          // Full slots
+    union semun sem_union;
+    sem_union.val = 1; 
+    if (semctl(sem_mutex_id, 0, SETVAL, sem_union) == -1) {  // Mutex semaphore initialized to 1
+        perror("semctl for mutex failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Create the Availabe semaphore
+    sem_available_id = semget(sem_available_key, 1, 0666 | IPC_CREAT | IPC_EXCL); 
+    if (sem_available_id== -1) {
+         if (errno == EEXIST) {
+        std::cerr << "Semaphore already exists.\n";
+        semctl(sem_available_id, 0, IPC_RMID); // Remove the semaphore
+         }
+        perror("Semaphore creation failed in consumer.");
+        return 1;
+    }
+    else {std::cerr << "Availble Semaphore id: " << sem_available_id << " \n";}
+
+    sem_union.val = buffer_size; 
+    if (semctl(sem_available_id, 0, SETVAL, sem_union) == -1) {  // Available semaphore initialized to buffersize
+        perror("semctl for available failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Create the filled semaphore
+    sem_filled_id = semget(sem_filled_key, 1, 0666 | IPC_CREAT | IPC_EXCL); 
+    if (sem_filled_id== -1) {
+         if (errno == EEXIST) {
+        std::cerr << "Semaphore already exists.\n";
+        semctl(sem_filled_id, 0, IPC_RMID); // Remove the semaphore
+         }
+        perror("Semaphore creation failed in consumer.");
+        return 1;
+    }
+    else {std::cerr << "Filled Semaphore id: " << sem_filled_id << " \n";}
+
+    sem_union.val = 0; 
+    if (semctl(sem_filled_id, 0, SETVAL, sem_union) == -1) {  // Filled semaphore initialized to 0
+        perror("semctl for available failed");
+        exit(EXIT_FAILURE);
+    }
+    
+// Initialize the current prices and average prices
+    double current_prices[MAX_COMMODITIES] = {0.00};
+    double current_avg[MAX_COMMODITIES] = {0.00};
 
     while (true) {
-        // Clear screen
-        printf("\e[1;1H\e[2J");
+        display_dashboard(current_prices, current_avg);
 
-        std::cout << "Commodity Dashboard\n";
-        std::cout << "===================\n";
-        std::cout << std::setw(15) << "CURRENCY" << std::setw(13) << "PRICE" << std::setw(22) << "AVERAGE PRICE" << "\n";
+        semWait(sem_filled_id); // Wait until at least one producer produces.
+        semWait(sem_mutex_id); // Lock mutex
+        
+    // -------------------------------------Critical Section-------------------------------------
 
-        for (int i = 0; i < MAX_COMMODITIES ; ++i) { // must loop on buffer size to change only the commodities being modified not effecient as i will have to save a dirty bit.
-            
-            // sem_wait(sem_id, 2); // Wait for full
-            // sem_wait(sem_id, 1); // Lock mutex
+        for (int i = 0; i < MAX_COMMODITIES ; ++i) { // must loop on buffer size to change only the commodities being modified-> not effecient as i will have to save a dirty bit.
+        
         int index = shared_buffer->write_index[i]; // Get the current write index for commodity i
         double latest_price;
         double average_val = 0.00;
@@ -164,22 +267,22 @@ for (int i = 0; i < MAX_COMMODITIES; i++) {
              latest_price = shared_buffer->prices[i][index - 1]; // Access the most recent price otherwise
          }
 
-    if (shared_buffer->prices[i][index] > 0) {
-    average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4] ) / 5;
-    }
+         if (shared_buffer->prices[i][index] > 0) {
+            average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4] ) / 5;
+            }
 
-        // Display the commodity, current price, and average price
-        std::cout << std::setw(15) << shared_buffer->commodities[i]  << ": " 
-                  << std::setw(10) << std::fixed << std::setprecision(2) << latest_price
-                  << std::setw(15) << std::fixed << std::setprecision(2) << average_val
-                  << "\n";
-
-            // sem_signal(sem_id, 1); // Unlock mutex
-            // sem_signal(sem_id, 0); // Signal empty
+        // Store the last price and average price of each commodity
+        current_prices[i] = latest_price;
+        current_avg[i] = average_val;
+     
         }
 
-        usleep(200 * 1000);
-        // sleep(1);
+    // -------------------------------------End of Critical Section-------------------------------------
+
+        semSignal(sem_mutex_id); // Unlock mutex
+        semSignal(sem_available_id); // Signal filled
+
+   
     }
 
     return 0;
