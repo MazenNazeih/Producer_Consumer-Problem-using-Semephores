@@ -101,6 +101,11 @@ void semSignal(int semid) {
     }
 }
 
+std :: string prev_price_color[MAX_COMMODITIES] = {""};
+std :: string prev_price_arrow[MAX_COMMODITIES] = {""};
+std :: string prev_avg_color[MAX_COMMODITIES] = {""};
+std :: string prev_avg_arrow[MAX_COMMODITIES] = {""};
+
 void display_dashboard(double current_prices[], double current_avg[], double prev_price[], double prev_avg[]) {
     // Clear screen
     printf("\e[1;1H\e[2J");
@@ -113,37 +118,39 @@ void display_dashboard(double current_prices[], double current_avg[], double pre
          std::cout << std::setw(12) << predefined_commodities[i] << ": " << std::setw(12) << std::fixed << std::setprecision(2);
           if (current_prices[i] < prev_price[i]) {
                     std::cout<< std::setw(15) << "\033[1;31m" << current_prices[i] << "\u2193" << "\033[0m";;
+                    prev_price_color[i] = "\033[1;31m";
+                    prev_price_arrow[i] = "\u2193";
                 } else if (current_prices[i] > prev_price[i]) {
-                    std::cout << std::setw(15) << "\033[1;32m" << current_prices[i] << "\u2191" <<"\033[0m";;
+                    std::cout << std::setw(15)  << "\033[1;32m" << current_prices[i] << "\u2191" <<"\033[0m";;
+                    prev_price_color[i] = "\033[1;32m";
+                    prev_price_arrow[i] = "\u2191";
                 } else {
-                    std::cout << current_prices[i];
+                    std::cout << std::setw(15)  << prev_price_color[i] << current_prices[i] << prev_price_arrow[i] <<"\033[0m";
                 }
 
                 std::cout << std::setw(15) << std::fixed << std::setprecision(2);
 
                 if (current_avg[i] < prev_avg[i]) {
-                    std::cout << std::setw(15) << "\033[1;31m" << " " << current_avg[i] << "\u2193" << "\033[0m";
+                    std::cout << std::setw(15)  << "\033[1;31m" << current_avg[i] << "\u2193" << "\033[0m";
+                    prev_avg_color[i] = "\033[1;31m";
+                    prev_avg_arrow[i] = "\u2193";
                 } else if (current_avg[i] > prev_avg[i]) {
-                    std::cout << std::setw(15) << "\033[1;32m" << " " << current_avg[i] << "\u2191" << "\033[0m";
+                    std::cout << std::setw(15) << "\033[1;32m" << current_avg[i] << "\u2191" << "\033[0m";
+                    prev_avg_color[i] = "\033[1;32m";
+                    prev_avg_arrow[i] = "\u2191";
                 } else {
-                    std::cout << current_avg[i];
+                     std::cout << std::setw(15) << prev_avg_color[i] << current_avg[i] << prev_avg_arrow[i] <<"\033[0m";
                 }
+                 
+                // std::cout << std::setw(15) << std::fixed << std::setprecision(2);
 
                 std::cout << "\n";
-
-
-
-        // std::cout << std::setw(15) << predefined_commodities[i] << ": " 
-        //           << std::setw(10) << std::fixed << std::setprecision(2) << current_prices[i]
-        //           << std::setw(15) << std::fixed << std::setprecision(2) << current_avg[i]
-        //           << "\n";
+        
     }
 }
 
 // ===========================================================================================
-
-
-
+// Main function
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         std::cerr << "Error not enough arguments sent.\nUsage: ./consumer <BUFFER_SIZE>\n";
