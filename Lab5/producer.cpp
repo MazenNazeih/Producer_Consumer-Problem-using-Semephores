@@ -33,7 +33,7 @@ const char* predefined_commodities[MAX_COMMODITIES] = {
     "GOLD",
     "LEAD",
     "MENTHAOIL",
-    "NATURAL GAS",
+    "NATURAL_GAS",
     "NICKEL",
     "SILVER",
     "ZINC"
