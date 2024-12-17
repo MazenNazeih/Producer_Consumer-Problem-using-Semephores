@@ -16,14 +16,35 @@
 #include <algorithm>
 #include <cctype>
 // #include <ctime>
+#include <queue>
 
 #define MAX_COMMODITIES 11
+#define Max_Buffer_size 40
 
 // Structure for shared memory
 struct SharedBuffer {
     double prices[MAX_COMMODITIES][5];        // Current prices saved to calc average
     int write_index[MAX_COMMODITIES];         // Write index for circular buffer to allow continous addition of prices.           
+    double buffer_prices[Max_Buffer_size];      // Pointer to array for prices (inside shared memory)
+    double buffer_comm_index[Max_Buffer_size];  // Pointer to array for commodity indexes (inside shared memory)
+    int front;               // Front of the queue
+    int rear;                // Rear of the queue
+    int count;               // Number of elements in the buffer
+    int buffer_size;         // Buffer size
 };
+
+// Push values into the buffer
+void push(SharedBuffer* sb, int price, int comm_index) {
+    if (sb->count < sb->buffer_size) {
+        sb->buffer_prices[sb->rear] = price;
+        sb->buffer_comm_index[sb->rear] = comm_index;
+        sb->rear = (sb->rear + 1) % sb->buffer_size;  // Wrap around
+        sb->count++;
+    } else {
+        std::cerr << "Buffer is full! Cannot push.\n";
+    }
+}
+
 
 const char* predefined_commodities[MAX_COMMODITIES] = {
     "ALUMINIUM",
@@ -33,7 +54,7 @@ const char* predefined_commodities[MAX_COMMODITIES] = {
     "GOLD",
     "LEAD",
     "MENTHAOIL",
-    "NATURAL_GAS",
+    "NATURAL GAS",
     "NICKEL",
     "SILVER",
     "ZINC"
@@ -115,7 +136,7 @@ int main(int argc, char *argv[]) {
     std::string commodity_name = argv[1];
     int comm_index = get_commodity_index(commodity_name); 
     if (comm_index == -1){
-        std::cerr << "Error Invalid Commodity name.\nMust enter one of these:\n\nALUMINIUM\nCOPPER\nCOTTON\nCRUDEOIL\nGOLD\nLEAD\nMENTHAOIL\nNATURAL GAS\nNICKEL\nSILVER\nZINC\n";
+        std::cerr << "Error Invalid Commodity name.\nMust enter one of these:\n\nALUMINIUM\nCOPPER\nCOTTON\nCRUDEOIL\nGOLD\nLEAD\nMENTHAOIL\nNATURAL_GAS\nNICKEL\nSILVER\nZINC\n";
         return 1;
     }
     
@@ -124,16 +145,18 @@ int main(int argc, char *argv[]) {
     int sleep_interval = std::stoi(argv[4]);
     int buffer_size = std::stoi(argv[5]);
 
+   
     // Generate unique key for shared memory and semaphores
-    // key_t sem_key = ftok("producer", 75);
-    key_t sharedm_key = ftok("consumer", 65);
+ 
+    key_t sharedm_key = ftok("consumer", 65); // uses same consumer key to access the shared memory
     if (sharedm_key == -1) {
         perror("Failed to generate shared memory key in the Producer");
         return 1;
     }
+    
 
     // Check if shared memory exists
-    shm_id = shmget(sharedm_key, sizeof(SharedBuffer), 0666); // Doesnt create the shared memory if doesnt exist
+    shm_id = shmget(sharedm_key, sizeof(SharedBuffer) , 0666); // Doesnt create the shared memory if doesnt exist
     if (shm_id == -1) {
         if (errno == ENOENT) {
             std::cerr << "Error: Shared memory does not exist. Please run the consumer first to create shared memory.\n";
@@ -147,6 +170,10 @@ int main(int argc, char *argv[]) {
     shared_buffer = (SharedBuffer *)shmat(shm_id, nullptr, 0);
     if (shared_buffer == (void *)-1) {
         perror("Failed to attach to shared memory from the producer.");
+        return 1;
+    }
+     if (buffer_size != shared_buffer->buffer_size){
+        perror("Invalid Buffer size, buffer size entered is not the same as consumer");
         return 1;
     }
 
@@ -209,14 +236,21 @@ int main(int argc, char *argv[]) {
         std::cerr << get_time() << "] " << commodity_name << ": trying to get mutex on shared buffer\n";
         semWait(sem_available_id); // Wait for the buffer to be available
         semWait(sem_mutex_id); // Lock mutex
+
+        // -------------------------------------Critical Section------------------------------------------------------------------
+
         printf("Producer have waited on mutex and entered critical section.\n");
 
         // Write to shared memory
         int index = shared_buffer->write_index[comm_index];
         shared_buffer->prices[comm_index][index] = price;
         shared_buffer->write_index[comm_index] = (index + 1) % 5;
+        push(shared_buffer, price, comm_index);
+        
         // Log placing value
         std::cerr << get_time() << "] " << commodity_name << ": placing " << price << " on shared buffer\n";
+        
+        //-------------------------------------End of Critical Section--------------------------------------------------------------
 
         semSignal(sem_mutex_id); // Unlock mutex
         semSignal(sem_filled_id); // Signal filled

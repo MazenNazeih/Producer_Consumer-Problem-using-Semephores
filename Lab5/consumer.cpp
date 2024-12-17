@@ -8,15 +8,55 @@
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
+#include <vector> 
 
 #define MAX_COMMODITIES 11
+#define Max_Buffer_size 40
+
+
 
 // Structure for shared memory
 struct SharedBuffer {
     double prices[MAX_COMMODITIES][5] ;       // Current prices
     int write_index[MAX_COMMODITIES];          // Write index for circular buffer to allow continous addition of prices. represent the next avaialable index to be written in.                        
+    double buffer_prices[Max_Buffer_size];      // Pointer to array for prices (inside shared memory)
+    double buffer_comm_index[Max_Buffer_size];  // Pointer to array for commodity indexes (inside shared memory)
+    int front;               // Front of the queue
+    int rear;                // Rear of the queue
+    int count;               // Number of elements in the buffer
+    int buffer_size;         // Buffer size
 };
+// Initialize the buffer inside shared memory
+void initBuffer(SharedBuffer* sb, int buffer_size) {
+    sb->front = 0;
+    sb->rear = 0;
+    sb->count = 0;
+    sb->buffer_size = buffer_size;
+}
 
+// Push values into the buffer
+void push(SharedBuffer* sb, int price, int comm_index) {
+    if (sb->count < sb->buffer_size) {
+        sb->buffer_prices[sb->rear] = price;
+        sb->buffer_comm_index[sb->rear] = comm_index;
+        sb->rear = (sb->rear + 1) % sb->buffer_size;  // Wrap around
+        sb->count++;
+    } else {
+        std::cerr << "Buffer is full! Cannot push.\n";
+    }
+}
+
+// Pop values from the buffer
+void pop(SharedBuffer* sb, int& price, int& comm_index) {
+    if (sb->count > 0) {
+        price = sb->buffer_prices[sb->front];
+        comm_index = sb->buffer_comm_index[sb->front];
+        sb->front = (sb->front + 1) % sb->buffer_size;  // Wrap around
+        sb->count--;
+    } else {
+        std::cerr << "Buffer is empty! Cannot pop.\n";
+    }
+}
 int shm_id;
 SharedBuffer *shared_buffer = nullptr;
 int sem_mutex_id = 0;
@@ -159,6 +199,11 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, handle_sigint); // listen for termination process and calls handle_siginit dunction.
     int buffer_size = std::stoi(argv[1]);
+    if (buffer_size >= Max_Buffer_size){
+        perror("Invalid Buffer size, buffer size entered is greater than the Max Buffer size");
+        return 1;
+    }
+   
 
     // Generate unique key for shared memory 
     key_t sharedm_key = ftok("consumer", 65);
@@ -183,18 +228,21 @@ int main(int argc, char *argv[]) {
     }
 
     shared_buffer = (SharedBuffer *)shmat(shm_id, nullptr, 0);    
-   
     if (shared_buffer == (void *)-1) {
         perror("Shared memory attachment failed in consumer.");
         shmdt(shared_buffer);
         return 1;
     }
 
+   // Initialize the buffer pointers
+    initBuffer(shared_buffer, buffer_size);
 
     // Initialize the write index array with 0
     memset(shared_buffer->write_index, 0, sizeof(shared_buffer->write_index));
     // Initialize the prices array with 0 
     memset(shared_buffer->prices, 0, sizeof(shared_buffer->prices));
+    memset(shared_buffer->buffer_comm_index, 0, sizeof(shared_buffer->buffer_comm_index));
+    memset(shared_buffer->buffer_prices, 0, sizeof(shared_buffer->buffer_prices));
   
 
     // Generate unique keys for sempahores
@@ -285,30 +333,34 @@ int main(int argc, char *argv[]) {
         
     // -------------------------------------Critical Section-------------------------------------
 
-        for (int i = 0; i < MAX_COMMODITIES ; ++i) { // must loop on buffer size to change only the commodities being modified-> not effecient as i will have to save a dirty bit.
+       
         
-        int index = shared_buffer->write_index[i]; // Get the current write index for commodity i
+        int bufferprice, comm_index;
+        pop(shared_buffer, bufferprice, comm_index); // Pop the price and commodity index from the buffer
+        int index = shared_buffer->write_index[comm_index]; // Get the current write index for commodity i
         double latest_price;
         double average_val = 0.00;
+        if (latest_price != bufferprice){
+            perror("something is wrong with the buffer");
+        }
         
          // Check for circular buffer edge case
          if (index == 0) {
-             latest_price = shared_buffer->prices[i][4]; // Access the last position if index is 0
+             latest_price = shared_buffer->prices[comm_index][4]; // Access the last position if index is 0
          } else {
-             latest_price = shared_buffer->prices[i][index - 1]; // Access the most recent price otherwise
+             latest_price = shared_buffer->prices[comm_index][index - 1]; // Access the most recent price otherwise
          }
 
-         if (shared_buffer->prices[i][index] > 0) {
-            average_val = (shared_buffer->prices[i][0] + shared_buffer->prices[i][1] + shared_buffer->prices[i][2] + shared_buffer->prices[i][3] + shared_buffer->prices[i][4] ) / 5;
+         if (shared_buffer->prices[comm_index][index] > 0) {
+            average_val = (shared_buffer->prices[comm_index][0] + shared_buffer->prices[comm_index][1] + shared_buffer->prices[comm_index][2] + shared_buffer->prices[comm_index][3] + shared_buffer->prices[comm_index][4] ) / 5;
             }
 
         // Store the last price and average price of each commodity
-        prev_price[i] = current_prices[i];
-        current_prices[i] = latest_price;
-        prev_avg[i] = current_avg[i];
-        current_avg[i] = average_val;
+        prev_price[comm_index] = current_prices[comm_index];
+        current_prices[comm_index] = latest_price;
+        prev_avg[comm_index] = current_avg[comm_index];
+        current_avg[comm_index] = average_val;
         
-        }
 
     // -------------------------------------End of Critical Section-------------------------------------
 
